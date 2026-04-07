@@ -1,0 +1,15 @@
+[project]
+name = "smartaid-env"
+version = "0.1.0"
+description = "AI-powered disaster logistics environment using OpenEnv"
+authors = [
+  { name = "GOPIRAM R" }
+]
+requires-python = ">=3.10"
+
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pydantic",
+  "httpx"
+]
