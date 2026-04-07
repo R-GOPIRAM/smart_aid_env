@@ -1,0 +1,259 @@
+version: "1.0"
+
+environment:
+  name: SmartAid-Env
+  description: >
+    Crisis-Aware AI Logistics Simulator — An OpenEnv-compliant reinforcement
+    learning environment for humanitarian last-mile delivery optimization.
+    The agent must coordinate a heterogeneous fleet (drones, ambulances, trucks)
+    to dispatch aid under dynamic crisis conditions: traffic surges, weather
+    hazards, perishable goods with decay timers, and stochastic black swan events.
+  author: SmartAid Team
+  license: MIT
+  version: "1.0.0"
+
+api:
+  reset:
+    method: POST
+    path: /reset
+    params:
+      - name: task_level
+        type: string
+        enum: [easy, medium, hard]
+        default: easy
+      - name: session_id
+        type: string
+        default: default
+    response:
+      observation: object  # Observation schema
+
+  step:
+    method: POST
+    path: /step
+    params:
+      - name: session_id
+        type: string
+        default: default
+    body: Action  # Action schema
+    response:
+      observation: object
+      reward: number
+      done: boolean
+      info: object
+
+  state:
+    method: GET
+    path: /state
+    params:
+      - name: session_id
+        type: string
+        default: default
+
+  grade:
+    method: GET
+    path: /grade
+    params:
+      - name: session_id
+        type: string
+        default: default
+    response:
+      score: number  # [0.0, 1.0]
+      completion_rate: number
+      priority_score: number
+      efficiency_score: number
+      non_expiry_score: number
+      details: object
+
+  health:
+    method: GET
+    path: /health
+
+tasks:
+  - id: easy
+    name: Easy — Baseline Delivery
+    description: >
+      1 truck, 3 requests, clear weather, no crisis.
+      Agent must deliver all requests before decay timers expire.
+      Tests basic prioritization and routing.
+    difficulty: easy
+    max_steps: 20
+    grader:
+      axes:
+        - name: completion_rate
+          weight: 0.60
+        - name: priority_score
+          weight: 0.25
+        - name: efficiency_score
+          weight: 0.10
+        - name: non_expiry_score
+          weight: 0.05
+      score_range: [0.0, 1.0]
+
+  - id: medium
+    name: Medium — Multi-Vehicle Coordination
+    description: >
+      2 vehicles (ambulance + truck), 4 requests, traffic + rain, 2 hazard zones.
+      Agent must coordinate vehicles, manage fuel, and avoid hazards.
+      Tests multi-vehicle assignment and constraint awareness.
+    difficulty: medium
+    max_steps: 20
+    grader:
+      axes:
+        - name: completion_rate
+          weight: 0.50
+        - name: priority_score
+          weight: 0.30
+        - name: efficiency_score
+          weight: 0.10
+        - name: non_expiry_score
+          weight: 0.10
+      score_range: [0.0, 1.0]
+
+  - id: hard
+    name: Hard — Full Crisis Simulation
+    description: >
+      3 vehicles (drone + ambulance + truck), 6 requests, flood weather, crisis active,
+      random hazard zones, dynamic urgency escalation, Black Swan events at step 5.
+      Tests adaptive strategy, fuel management, and performance under chaos.
+    difficulty: hard
+    max_steps: 20
+    grader:
+      axes:
+        - name: completion_rate
+          weight: 0.40
+        - name: priority_score
+          weight: 0.35
+        - name: efficiency_score
+          weight: 0.10
+        - name: non_expiry_score
+          weight: 0.15
+      score_range: [0.0, 1.0]
+
+observation_space:
+  type: json
+  schema:
+    $ref: "#/components/schemas/Observation"
+
+action_space:
+  type: json
+  schema:
+    $ref: "#/components/schemas/Action"
+
+reward:
+  range: [-inf, +inf]
+  shaped: true
+  description: >
+    Per-step shaped reward. Positive for deliveries (scaled by type and urgency).
+    Negative for ignoring urgent requests and for aid expiry.
+    Small per-step penalty encourages efficiency.
+
+components:
+  schemas:
+    Observation:
+      type: object
+      required: [step, requests, vehicles, traffic, weather, crisis_active, hazard_zones]
+      properties:
+        step:
+          type: integer
+          description: Current simulation tick (0-indexed)
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/Request"
+        vehicles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Vehicle"
+        traffic:
+          $ref: "#/components/schemas/TrafficCondition"
+        weather:
+          $ref: "#/components/schemas/WeatherCondition"
+        crisis_active:
+          type: boolean
+        hazard_zones:
+          type: array
+          items:
+            type: array
+            items: {type: integer}
+            minItems: 2
+            maxItems: 2
+
+    Request:
+      type: object
+      required: [id, type, urgency, location, population_impact]
+      properties:
+        id: {type: string}
+        type:
+          type: string
+          enum: [medical, food, supply]
+        urgency:
+          type: integer
+          minimum: 1
+          maximum: 10
+        location:
+          type: array
+          items: {type: integer}
+          minItems: 2
+          maxItems: 2
+        population_impact: {type: integer, minimum: 0}
+        is_active: {type: boolean}
+        decay_timer: {type: integer, minimum: 0}
+        is_expired: {type: boolean}
+        is_delivered: {type: boolean}
+
+    Vehicle:
+      type: object
+      required: [id, type, location, capacity]
+      properties:
+        id: {type: string}
+        type:
+          type: string
+          enum: [drone, ambulance, truck]
+        location:
+          type: array
+          items: {type: integer}
+          minItems: 2
+          maxItems: 2
+        capacity: {type: integer, minimum: 1}
+        busy_until: {type: integer, minimum: 0}
+        fuel: {type: number, minimum: 0.0}
+
+    TrafficCondition:
+      type: object
+      required: [delay_factor]
+      properties:
+        delay_factor: {type: number, minimum: 0.1}
+
+    WeatherCondition:
+      type: object
+      required: [condition, severity]
+      properties:
+        condition:
+          type: string
+          enum: [clear, rain, storm, flood]
+        severity:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    Action:
+      type: object
+      properties:
+        assignments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionAssignment"
+
+    ActionAssignment:
+      type: object
+      required: [vehicle_id, request_id, priority, route_strategy]
+      properties:
+        vehicle_id: {type: string}
+        request_id: {type: string}
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+        route_strategy:
+          type: string
+          enum: [fastest, safest, balanced]
