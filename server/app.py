@@ -1,4 +1,4 @@
-from fastapi import FastAPI
-from server import app as main_app
+from server import app as fastapi_app
 
-app = main_app
+def main():
+    return fastapi_app  
