@@ -1,10 +1,22 @@
 """
 Deterministic grader for SmartAid OpenEnv.
-Returns a score in [0.0, 1.0] based on multiple weighted axes.
+Returns a score strictly in (0.0, 1.0) — never exactly 0 or 1.
 Each task level has calibrated thresholds for fair evaluation.
+
+OpenEnv Phase-2 requirement: score ∈ (0.001, 0.999) i.e. strictly between 0 and 1.
 """
 from typing import List, Dict, Any
 from .models import GradeResult
+
+
+# Boundary constants — keep scores strictly inside open interval (0, 1)
+_SCORE_MIN = 0.001   # strictly > 0.0
+_SCORE_MAX = 0.999   # strictly < 1.0
+
+
+def _clamp(val: float) -> float:
+    """Clamp a float to the open interval (0.001, 0.999)."""
+    return max(_SCORE_MIN, min(_SCORE_MAX, float(val)))
 
 
 # Per-level weighting profiles
@@ -17,14 +29,14 @@ LEVEL_WEIGHTS = {
 
 def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str = "medium") -> GradeResult:
     """
-    Deterministic grader that returns a score in [0.0, 1.0].
+    Deterministic grader that returns a score strictly in (0.0, 1.0).
 
     Scoring axes:
       1. Completion Rate     — fraction of requests delivered
       2. Priority Score      — fraction of urgency >= 8 requests delivered
       3. Efficiency Score    — penalizes using too many steps
       4. Non-Expiry Score    — rewards preventing aid from decaying
-      
+
     Args:
         history:     List of step records from env.get_history()
         final_state: Dict from env.state() at episode end
@@ -32,14 +44,16 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
 
     Returns:
         GradeResult with overall score and component breakdown.
+        Score is ALWAYS strictly within (0.001, 0.999) — never 0.0 or 1.0.
     """
     if not history:
+        # No steps taken → lowest meaningful score (not exactly 0)
         return GradeResult(
-            score=0.0,
-            completion_rate=0.0,
-            priority_score=0.0,
-            efficiency_score=0.0,
-            non_expiry_score=0.0,
+            score=_SCORE_MIN,
+            completion_rate=_SCORE_MIN,
+            priority_score=_SCORE_MIN,
+            efficiency_score=_SCORE_MIN,
+            non_expiry_score=_SCORE_MIN,
             details={"reason": "no_steps_taken"}
         )
 
@@ -47,22 +61,23 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
     total_requests = len(requests)
 
     if total_requests == 0:
+        # No requests in scenario → highest meaningful score (not exactly 1)
         return GradeResult(
-            score=1.0,
-            completion_rate=1.0,
-            priority_score=1.0,
-            efficiency_score=1.0,
-            non_expiry_score=1.0,
+            score=_SCORE_MAX,
+            completion_rate=_SCORE_MAX,
+            priority_score=_SCORE_MAX,
+            efficiency_score=_SCORE_MAX,
+            non_expiry_score=_SCORE_MAX,
             details={"reason": "no_requests"}
         )
 
-    # ─── 1. Completion Rate ───────────────────────────────────────────────────
-    # Handle both Pydantic model objects and raw dicts (from serialised state)
+    # ─── Helper: support both Pydantic models and raw dicts ──────────────────
     def _get(obj, key, default=None):
         if isinstance(obj, dict):
             return obj.get(key, default)
         return getattr(obj, key, default)
 
+    # ─── 1. Completion Rate ───────────────────────────────────────────────────
     delivered = sum(1 for r in requests if _get(r, "is_delivered", False))
     completion_rate = delivered / total_requests
 
@@ -83,13 +98,19 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
 
     # ─── Weighted Aggregate ───────────────────────────────────────────────────
     weights = LEVEL_WEIGHTS.get(task_level, LEVEL_WEIGHTS["medium"])
-    score = (
+    raw_score = (
         completion_rate  * weights["completion"] +
         priority_score   * weights["priority"] +
         efficiency_score * weights["efficiency"] +
         non_expiry_score * weights["non_expiry"]
     )
-    score = min(1.0, max(0.0, score))
+
+    # ─── Clamp all scores to strictly open interval (0.001, 0.999) ───────────
+    score            = _clamp(raw_score)
+    completion_rate  = _clamp(completion_rate)
+    priority_score   = _clamp(priority_score)
+    efficiency_score = _clamp(efficiency_score)
+    non_expiry_score = _clamp(non_expiry_score)
 
     details = {
         "delivered": float(delivered),
@@ -99,6 +120,7 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         "expired_requests": float(expired),
         "steps_taken": float(steps_taken),
         "weights": weights,
+        "raw_score": float(raw_score),
     }
 
     return GradeResult(

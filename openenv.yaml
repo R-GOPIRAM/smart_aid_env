@@ -57,7 +57,7 @@ api:
         type: string
         default: default
     response:
-      score: number  # [0.0, 1.0]
+      score: number  # strictly in (0.0, 1.0) — never exactly 0 or 1
       completion_rate: number
       priority_score: number
       efficiency_score: number
@@ -87,7 +87,7 @@ tasks:
           weight: 0.10
         - name: non_expiry_score
           weight: 0.05
-      score_range: [0.0, 1.0]
+      score_range: [0.001, 0.999]
 
   - id: medium
     name: Medium — Multi-Vehicle Coordination
@@ -107,7 +107,7 @@ tasks:
           weight: 0.10
         - name: non_expiry_score
           weight: 0.10
-      score_range: [0.0, 1.0]
+      score_range: [0.001, 0.999]
 
   - id: hard
     name: Hard — Full Crisis Simulation
@@ -127,7 +127,7 @@ tasks:
           weight: 0.10
         - name: non_expiry_score
           weight: 0.15
-      score_range: [0.0, 1.0]
+      score_range: [0.001, 0.999]
 
 observation_space:
   type: json
