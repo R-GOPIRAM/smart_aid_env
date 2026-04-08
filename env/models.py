@@ -86,10 +86,12 @@ class Reward(BaseModel):
 
 
 class GradeResult(BaseModel):
-    """Final grading result at end of episode."""
-    score: float = Field(..., ge=0.0, le=1.0, description="Final score between 0.0 and 1.0")
-    completion_rate: float = Field(..., ge=0.0, le=1.0)
-    priority_score: float = Field(..., ge=0.0, le=1.0)
-    efficiency_score: float = Field(..., ge=0.0, le=1.0)
-    non_expiry_score: float = Field(..., ge=0.0, le=1.0)
+    """Final grading result at end of episode.
+    All scores are STRICTLY between 0.0 and 1.0 (exclusive) as required by OpenEnv Phase 2.
+    """
+    score: float = Field(..., gt=0.0, lt=1.0, description="Final score strictly between 0.0 and 1.0 (exclusive)")
+    completion_rate: float = Field(..., gt=0.0, lt=1.0, description="Fraction of requests delivered, strictly in (0,1)")
+    priority_score: float = Field(..., gt=0.0, lt=1.0, description="High-priority delivery rate, strictly in (0,1)")
+    efficiency_score: float = Field(..., gt=0.0, lt=1.0, description="Step efficiency score, strictly in (0,1)")
+    non_expiry_score: float = Field(..., gt=0.0, lt=1.0, description="Aid freshness score, strictly in (0,1)")
     details: Dict[str, Any] = Field(default_factory=dict)

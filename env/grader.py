@@ -1,9 +1,10 @@
 """
 Deterministic grader for SmartAid OpenEnv.
-Returns a score strictly in (0.0, 1.0) — never exactly 0 or 1.
+Returns a score STRICTLY in (0.0, 1.0) — never exactly 0 or 1.
 Each task level has calibrated thresholds for fair evaluation.
 
-OpenEnv Phase-2 requirement: score ∈ [0.01, 0.99] i.e. strictly between 0 and 1.
+OpenEnv Phase-2 requirement: score ∈ (0, 1) strictly — not 0.0 and not 1.0.
+The GradeResult model enforces gt=0.0, lt=1.0 via Pydantic field validators.
 """
 import logging
 from typing import List, Dict, Any
@@ -12,21 +13,39 @@ logger = logging.getLogger(__name__)
 
 from .models import GradeResult
 
+# Hard bounds: ALL scores must satisfy SCORE_MIN < score < SCORE_MAX
+SCORE_MIN = 0.01
+SCORE_MAX = 0.99
 
-def safe_score(score):
-    if score is None:
-        return 0.01
-    if score <= 0:
-        return 0.01
-    if score >= 1:
-        return 0.99
-    
-    # Enforce safe bounds and round to 4 decimals
-    safe_val = min(max(round(float(score), 4), 0.01), 0.99)
-    
-    # Ensure assertion guard
-    assert 0 < safe_val < 1, f"Invalid score detected: {safe_val}"
-    return safe_val
+
+def safe_score(score) -> float:
+    """
+    Clamp any float to strictly (SCORE_MIN, SCORE_MAX).
+    This guarantees the Pydantic gt=0.0 lt=1.0 constraint is always met.
+    """
+    if score is None or score != score:  # None or NaN
+        return SCORE_MIN
+    try:
+        val = float(score)
+    except (TypeError, ValueError):
+        return SCORE_MIN
+
+    # Clamp to safe range first
+    if val <= 0.0:
+        return SCORE_MIN
+    if val >= 1.0:
+        return SCORE_MAX
+
+    # Round to 4 decimal places and re-clamp
+    val = round(val, 4)
+    val = max(SCORE_MIN, min(SCORE_MAX, val))
+
+    # Final sanity check — this should never fail given the logic above
+    if not (0.0 < val < 1.0):
+        logger.error(f"safe_score produced invalid value {val} from input {score}, defaulting to {SCORE_MIN}")
+        return SCORE_MIN
+
+    return val
 
 
 # Per-level weighting profiles
@@ -37,9 +56,32 @@ LEVEL_WEIGHTS = {
 }
 
 
+def _make_grade_result(score, completion_rate, priority_score, efficiency_score, non_expiry_score, details) -> GradeResult:
+    """Build a GradeResult, ensuring all scores pass Pydantic gt=0/lt=1 validation."""
+    s = safe_score(score)
+    cr = safe_score(completion_rate)
+    ps = safe_score(priority_score)
+    es = safe_score(efficiency_score)
+    ns = safe_score(non_expiry_score)
+
+    logger.info(
+        f"GradeResult: score={s} completion={cr} priority={ps} efficiency={es} non_expiry={ns} "
+        f"(all strictly in ({SCORE_MIN}, {SCORE_MAX}))"
+    )
+
+    return GradeResult(
+        score=s,
+        completion_rate=cr,
+        priority_score=ps,
+        efficiency_score=es,
+        non_expiry_score=ns,
+        details=details,
+    )
+
+
 def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str = "medium") -> GradeResult:
     """
-    Deterministic grader that returns a score strictly in (0.0, 1.0).
+    Deterministic grader that returns a GradeResult with all scores strictly in (0.0, 1.0).
 
     Scoring axes:
       1. Completion Rate     — fraction of requests delivered
@@ -53,37 +95,34 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         task_level:  'easy', 'medium', or 'hard'
 
     Returns:
-        GradeResult with overall score and component breakdown.
-        Score is ALWAYS strictly within (0.01, 0.99) — never 0.0 or 1.0.
+        GradeResult with score and all components STRICTLY within (0.01, 0.99).
     """
+    details_base = {"task_level": task_level}
+
     if not history:
-        # No steps taken → lowest meaningful score (not exactly 0)
-        result = GradeResult(
-            score=safe_score(0),
-            completion_rate=safe_score(0),
-            priority_score=safe_score(0),
-            efficiency_score=safe_score(0),
-            non_expiry_score=safe_score(0),
-            details={"reason": "no_steps_taken"}
+        logger.info("grade_run: no steps taken — returning minimum scores")
+        return _make_grade_result(
+            score=0,
+            completion_rate=0,
+            priority_score=0,
+            efficiency_score=0,
+            non_expiry_score=0,
+            details={**details_base, "reason": "no_steps_taken"},
         )
-        logger.info(f"DEBUG_PHASE2: Final Score Validation (Early return): score={result.score} (Valid: {0.01 <= result.score <= 0.99 and not (result.score == 1.0 or result.score == 0.0)})")
-        return result
 
     requests = final_state.get("requests", [])
     total_requests = len(requests)
 
     if total_requests == 0:
-        # No requests in scenario → highest meaningful score (not exactly 1)
-        result = GradeResult(
-            score=safe_score(1),
-            completion_rate=safe_score(1),
-            priority_score=safe_score(1),
-            efficiency_score=safe_score(1),
-            non_expiry_score=safe_score(1),
-            details={"reason": "no_requests"}
+        logger.info("grade_run: no requests in scenario — returning maximum scores")
+        return _make_grade_result(
+            score=1,
+            completion_rate=1,
+            priority_score=1,
+            efficiency_score=1,
+            non_expiry_score=1,
+            details={**details_base, "reason": "no_requests"},
         )
-        logger.info(f"DEBUG_PHASE2: Final Score Validation (Early return): score={result.score} (Valid: {0.01 <= result.score <= 0.99 and not (result.score == 1.0 or result.score == 0.0)})")
-        return result
 
     # ─── Helper: support both Pydantic models and raw dicts ──────────────────
     def _get(obj, key, default=None):
@@ -98,10 +137,13 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
     # ─── 2. Priority Score ────────────────────────────────────────────────────
     high_priority = [r for r in requests if _get(r, "urgency", 0) >= 8]
     hp_delivered = sum(1 for r in high_priority if _get(r, "is_delivered", False))
-    priority_score = (hp_delivered / max(len(high_priority), 1)) if high_priority else 1.0
+    if high_priority:
+        priority_score = hp_delivered / len(high_priority)
+    else:
+        # No high-priority requests means no penalty — treat as partial success
+        priority_score = 0.75  # neutral value, will be safe_score'd to 0.75
 
     # ─── 3. Efficiency Score ──────────────────────────────────────────────────
-    # Fewer steps used ↔ higher efficiency. Normalised over max_steps=20.
     steps_taken = len(history)
     max_steps = 20
     efficiency_score = max(0.0, 1.0 - (steps_taken / max(max_steps, 1)))
@@ -119,14 +161,8 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         non_expiry_score * weights["non_expiry"]
     )
 
-    # ─── Clamp all scores to [0.01, 0.99] ───────────
-    score            = safe_score(raw_score)
-    completion_rate  = safe_score(completion_rate)
-    priority_score   = safe_score(priority_score)
-    efficiency_score = safe_score(efficiency_score)
-    non_expiry_score = safe_score(non_expiry_score)
-
     details = {
+        **details_base,
         "delivered": float(delivered),
         "total_requests": float(total_requests),
         "high_priority_delivered": float(hp_delivered),
@@ -135,17 +171,17 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         "steps_taken": float(steps_taken),
         "weights": weights,
         "raw_score": float(raw_score),
+        "raw_completion_rate": float(completion_rate),
+        "raw_priority_score": float(priority_score),
+        "raw_efficiency_score": float(efficiency_score),
+        "raw_non_expiry_score": float(non_expiry_score),
     }
 
-    result = GradeResult(
-        score=score,
+    return _make_grade_result(
+        score=raw_score,
         completion_rate=completion_rate,
         priority_score=priority_score,
         efficiency_score=efficiency_score,
         non_expiry_score=non_expiry_score,
-        details=details
+        details=details,
     )
-
-    logger.info(f"DEBUG_PHASE2: Final Score Validation: score={score} (Valid: {0.01 <= score <= 0.99 and not (score == 1.0 or score == 0.0)})")
-    
-    return result
