@@ -23,8 +23,8 @@ API_BASE_URL    = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME      = os.getenv("MODEL_NAME", "gpt-4o")
 HF_TOKEN        = os.getenv("HF_TOKEN", "dummy-key")
 ENV_URL         = os.getenv("ENV_URL", "http://127.0.0.1:7860")
-TASK_LEVEL      = os.getenv("TASK_LEVEL", "medium")   # easy | medium | hard
-SESSION_ID      = os.getenv("SESSION_ID", "inference-default")
+TASK_LEVEL      = os.getenv("TASK_LEVEL", "all")   # easy | medium | hard | all
+SESSION_ID_BASE = os.getenv("SESSION_ID", "inference-default")
 SEED            = int(os.getenv("SEED", "42"))
 MAX_RETRIES     = int(os.getenv("MAX_RETRIES", "3"))
 STEP_SLEEP      = float(os.getenv("STEP_SLEEP", "0.1"))
@@ -123,10 +123,11 @@ If no assignments, output: {{"assignments": []}}"""
 
 # ─── Main Inference Loop ──────────────────────────────────────────────────────
 
-def run_inference():
+def run_inference(task_level: str):
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    session_id = f"{SESSION_ID_BASE}-{task_level}"
 
-    print(f"[START] task={TASK_LEVEL} env={ENV_NAME} model={MODEL_NAME}", flush=True)
+    print(f"\n[START] task={task_level} env={ENV_NAME} model={MODEL_NAME}", flush=True)
 
     rewards_history = []
     total_steps = 0
@@ -137,7 +138,7 @@ def run_inference():
     try:
         res = http_requests.post(
             f"{ENV_URL}/reset",
-            params={"task_level": TASK_LEVEL, "session_id": SESSION_ID},
+            params={"task_level": task_level, "session_id": session_id},
             timeout=30,
         )
         res.raise_for_status()
@@ -183,7 +184,7 @@ def run_inference():
             step_res = http_requests.post(
                 f"{ENV_URL}/step",
                 json=action_data,
-                params={"session_id": SESSION_ID},
+                params={"session_id": session_id},
                 timeout=30,
             )
             step_res.raise_for_status()
@@ -220,6 +221,24 @@ def run_inference():
     rewards_str = ",".join(f"{r:.2f}" for r in rewards_history)
     print(f"[END] success={success_str} steps={total_steps} rewards={rewards_str}", flush=True)
 
+    # ── Grader Call ────────────────────────────────────────────────────────────
+    try:
+        grade_res = http_requests.get(
+            f"{ENV_URL}/grade",
+            params={"session_id": session_id},
+            timeout=30,
+        )
+        grade_res.raise_for_status()
+        grade_data = grade_res.json()
+        print(f"[GRADE] task={task_level} score={grade_data['score']:.4f} details={json.dumps(grade_data['details'])}", flush=True)
+    except Exception as e:
+        logger.error(f"Failed to fetch grade: {e}")
+
+
+def main():
+    tasks = ["easy", "medium", "hard"] if TASK_LEVEL == "all" else [TASK_LEVEL]
+    for task in tasks:
+        run_inference(task)
 
 if __name__ == "__main__":
-    run_inference()
+    main()

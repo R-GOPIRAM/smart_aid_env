@@ -3,19 +3,23 @@ Deterministic grader for SmartAid OpenEnv.
 Returns a score strictly in (0.0, 1.0) — never exactly 0 or 1.
 Each task level has calibrated thresholds for fair evaluation.
 
-OpenEnv Phase-2 requirement: score ∈ (0.001, 0.999) i.e. strictly between 0 and 1.
+OpenEnv Phase-2 requirement: score ∈ [0.01, 0.99] i.e. strictly between 0 and 1.
 """
+import logging
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
 from .models import GradeResult
 
 
 # Boundary constants — keep scores strictly inside open interval (0, 1)
-_SCORE_MIN = 0.001   # strictly > 0.0
-_SCORE_MAX = 0.999   # strictly < 1.0
+_SCORE_MIN = 0.01   # strictly > 0.0
+_SCORE_MAX = 0.99   # strictly < 1.0
 
 
 def _clamp(val: float) -> float:
-    """Clamp a float to the open interval (0.001, 0.999)."""
+    """Clamp a float to the interval [0.01, 0.99]."""
     return max(_SCORE_MIN, min(_SCORE_MAX, float(val)))
 
 
@@ -48,7 +52,7 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
     """
     if not history:
         # No steps taken → lowest meaningful score (not exactly 0)
-        return GradeResult(
+        result = GradeResult(
             score=_SCORE_MIN,
             completion_rate=_SCORE_MIN,
             priority_score=_SCORE_MIN,
@@ -56,13 +60,15 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
             non_expiry_score=_SCORE_MIN,
             details={"reason": "no_steps_taken"}
         )
+        logger.info(f"DEBUG_PHASE2: Final Score Validation (Early return): score={result.score} (Valid: {0.01 <= result.score <= 0.99 and not (result.score == 1.0 or result.score == 0.0)})")
+        return result
 
     requests = final_state.get("requests", [])
     total_requests = len(requests)
 
     if total_requests == 0:
         # No requests in scenario → highest meaningful score (not exactly 1)
-        return GradeResult(
+        result = GradeResult(
             score=_SCORE_MAX,
             completion_rate=_SCORE_MAX,
             priority_score=_SCORE_MAX,
@@ -70,6 +76,8 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
             non_expiry_score=_SCORE_MAX,
             details={"reason": "no_requests"}
         )
+        logger.info(f"DEBUG_PHASE2: Final Score Validation (Early return): score={result.score} (Valid: {0.01 <= result.score <= 0.99 and not (result.score == 1.0 or result.score == 0.0)})")
+        return result
 
     # ─── Helper: support both Pydantic models and raw dicts ──────────────────
     def _get(obj, key, default=None):
@@ -105,7 +113,7 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         non_expiry_score * weights["non_expiry"]
     )
 
-    # ─── Clamp all scores to strictly open interval (0.001, 0.999) ───────────
+    # ─── Clamp all scores to [0.01, 0.99] ───────────
     score            = _clamp(raw_score)
     completion_rate  = _clamp(completion_rate)
     priority_score   = _clamp(priority_score)
@@ -123,7 +131,7 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         "raw_score": float(raw_score),
     }
 
-    return GradeResult(
+    result = GradeResult(
         score=score,
         completion_rate=completion_rate,
         priority_score=priority_score,
@@ -131,3 +139,7 @@ def grade_run(history: List[Dict], final_state: Dict[str, Any], task_level: str 
         non_expiry_score=non_expiry_score,
         details=details
     )
+
+    logger.info(f"DEBUG_PHASE2: Final Score Validation: score={score} (Valid: {0.01 <= score <= 0.99 and not (score == 1.0 or score == 0.0)})")
+    
+    return result

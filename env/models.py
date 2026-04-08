@@ -43,9 +43,12 @@ class WeatherCondition(BaseModel):
 class Observation(BaseModel):
     """
     Full observation returned by reset() and step().
-    This is the agent's view of the environment state.
     """
     step: int = Field(..., ge=0, description="Current simulation tick")
+    task_id: str = Field("easy", description="ID of the current task")
+    difficulty: str = Field("easy", description="Task difficulty")
+    resources: Dict[str, Any] = Field(default_factory=dict)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
     requests: List[Request] = Field(..., description="All aid requests (active + handled)")
     vehicles: List[Vehicle] = Field(..., description="All dispatch vehicles")
     traffic: TrafficCondition = Field(..., description="Current traffic conditions")

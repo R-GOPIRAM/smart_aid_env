@@ -13,6 +13,9 @@ from .reward import calculate_step_reward
 
 logger = logging.getLogger(__name__)
 
+# Temporary debug trackers for Phase 2 validation
+_executed_tasks = set()
+
 
 class SmartAidEnv:
     """
@@ -46,6 +49,10 @@ class SmartAidEnv:
 
         task_data = generate_task(task_level, self.rng)
         self.state_data = {
+            "task_id": task_data["task_id"],
+            "difficulty": task_data["difficulty"],
+            "resources": task_data["resources"],
+            "constraints": task_data["constraints"],
             "requests": task_data["requests"],
             "vehicles": task_data["vehicles"],
             "traffic": task_data["traffic"],
@@ -57,7 +64,12 @@ class SmartAidEnv:
         }
 
         obs = self._get_observation()
-        logger.info(f"Environment reset. task_level={task_level} seed={self.seed}")
+        
+        # Phase 2 Debug Logging
+        _executed_tasks.add(task_level)
+        logger.info(f"DEBUG_PHASE2: Environment reset. task_level={task_level}")
+        logger.info(f"DEBUG_PHASE2: Total distinct tasks executed so far: {len(_executed_tasks)} ({list(_executed_tasks)})")
+        
         return obs
 
     async def step(self, action: Action) -> Tuple[Observation, float, bool, Dict]:
@@ -238,6 +250,10 @@ class SmartAidEnv:
         """Construct and return an Observation Pydantic model."""
         return Observation(
             step=self.current_step,
+            task_id=self.state_data.get("task_id", self._task_level),
+            difficulty=self.state_data.get("difficulty", self._task_level),
+            resources=self.state_data.get("resources", {}),
+            constraints=self.state_data.get("constraints", {}),
             requests=self.state_data["requests"],
             vehicles=self.state_data["vehicles"],
             traffic=self.state_data["traffic"],

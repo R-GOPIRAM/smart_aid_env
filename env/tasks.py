@@ -50,6 +50,10 @@ def generate_task(level: str, rng: random.Random):
         hazard_zones = [[rng.randint(0,10), rng.randint(0,10)] for _ in range(3)]
 
     return {
+        "task_id": level,
+        "difficulty": level,
+        "resources": {"vehicles": len(vehicles)},
+        "constraints": {"max_steps": 20},
         "requests": requests,
         "vehicles": vehicles,
         "traffic": traffic,

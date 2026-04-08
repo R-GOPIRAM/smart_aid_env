@@ -151,11 +151,15 @@ components:
   schemas:
     Observation:
       type: object
-      required: [step, requests, vehicles, traffic, weather, crisis_active, hazard_zones]
+      required: [step, task_id, difficulty, requests, vehicles, traffic, weather, crisis_active, hazard_zones]
       properties:
         step:
           type: integer
           description: Current simulation tick (0-indexed)
+        task_id: {type: string}
+        difficulty: {type: string}
+        resources: {type: object}
+        constraints: {type: object}
         requests:
           type: array
           items:
